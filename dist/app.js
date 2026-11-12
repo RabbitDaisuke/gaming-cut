@@ -423,7 +423,9 @@ function moveEraseCursor(e){
   cursor.style.top=(e.clientY-area.top+$('result-area').scrollTop)+'px';cursor.hidden=false;
 }
 function captureErasePoint(e){
-  const s=eraseStroke,r=s.rect,b=s.bounds;
+  const s=eraseStroke,r=$('result').getBoundingClientRect(),b=s.bounds;
+  if(!r.width||!r.height)return;
+  // Keep outside coordinates: the canvas clips the brush without moving it to an edge.
   const p={x:b.x+(e.clientX-r.left)/r.width*b.width,y:b.y+(e.clientY-r.top)/r.height*b.height};
   const last=s.path.at(-1);
   if(!last||p.x!==last.x||p.y!==last.y)s.path.push(p);
@@ -434,11 +436,18 @@ function cancelErase(){
   if($('result').hasPointerCapture(id))$('result').releasePointerCapture(id);
   $('erase-cursor').hidden=true;drawResult();updateButtons();return true;
 }
+function finishErase(){
+  if(!eraseStroke)return false;
+  const finished=eraseStroke;eraseStroke=null;
+  if($('result').hasPointerCapture(finished.pointerId))$('result').releasePointerCapture(finished.pointerId);
+  const im=active();if(im?.id===finished.imageId){saveHistory(im);(im.erasures||=[]).push({path:finished.path,radius:finished.radius});updateErasedBounds(im);}
+  $('erase-cursor').hidden=true;updateButtons();draw();return true;
+}
 for(let i=0;i<eraseSizes.length;i++)$('erase-size-'+i).onclick=()=>{eraseSize=i;$('erase-cursor').hidden=true;updateButtons();};
 $('result').addEventListener('pointerdown',e=>{
   if(eraseStroke||stroke||e.isPrimary===false||e.button!==0||!ready(active())||showOriginal||saving)return;
   e.preventDefault();const im=active(),rect=$('result').getBoundingClientRect(),bounds=outputBounds(im);
-  eraseStroke={imageId:im.id,pointerId:e.pointerId,rect,bounds,radius:eraseSizes[eraseSize]*bounds.width/rect.width/2,path:[]};
+  eraseStroke={imageId:im.id,pointerId:e.pointerId,bounds,radius:eraseSizes[eraseSize]*bounds.width/rect.width/2,path:[]};
   captureErasePoint(e);$('result').setPointerCapture(e.pointerId);moveEraseCursor(e);drawResult();updateButtons();
 });
 $('result').addEventListener('pointermove',e=>{
@@ -449,12 +458,9 @@ $('result').addEventListener('pointermove',e=>{
 });
 $('result').addEventListener('pointerup',e=>{
   if(!eraseStroke||e.pointerId!==eraseStroke.pointerId)return;
-  e.preventDefault();captureErasePoint(e);const finished=eraseStroke;eraseStroke=null;
-  if($('result').hasPointerCapture(e.pointerId))$('result').releasePointerCapture(e.pointerId);
-  const im=active();if(im?.id===finished.imageId){saveHistory(im);(im.erasures||=[]).push({path:finished.path,radius:finished.radius});updateErasedBounds(im);}
-  $('erase-cursor').hidden=true;updateButtons();draw();
+  e.preventDefault();captureErasePoint(e);finishErase();
 });
-for(const type of ['pointercancel','lostpointercapture'])$('result').addEventListener(type,e=>{if(e.pointerId===eraseStroke?.pointerId)cancelErase();});
+for(const type of ['pointercancel','lostpointercapture'])$('result').addEventListener(type,e=>{if(e.pointerId===eraseStroke?.pointerId)finishErase();});
 $('result').addEventListener('pointerleave',()=>{if(!eraseStroke)$('erase-cursor').hidden=true;});
 $('erase-undo').onclick=()=>undo();
 $('canvas').addEventListener('pointerdown',e=>{
@@ -476,7 +482,7 @@ $('canvas').addEventListener('pointerup',e=>{
   if(finished.imageId===activeId)commitStroke(finished.path,finished.label,finished.mode);
 });
 for(const type of ['pointercancel','lostpointercapture'])$('canvas').addEventListener(type,e=>{if(e.pointerId===stroke?.pointerId)cancelStroke();});
-window.addEventListener('blur',()=>{cancelStroke();cancelErase();});
+window.addEventListener('blur',()=>{cancelStroke();finishErase();});
 $('canvas').addEventListener('contextmenu',e=>e.preventDefault());
 $('canvas').addEventListener('keydown',e=>{
   const d=e.shiftKey?.05:.01;
@@ -512,8 +518,8 @@ $('keep-background').onchange=()=>{
   updateButtons();drawResult();
 };
 $('mp4-fill').oninput=()=>{const im=active();if(im){im.mp4Fill=$('mp4-fill').value;drawResult();}};
-new ResizeObserver(()=>{cancelErase();draw();}).observe($('canvas-area'));
-new ResizeObserver(()=>{cancelErase();draw();}).observe($('result-area'));
+new ResizeObserver(()=>draw()).observe($('canvas-area'));
+new ResizeObserver(()=>draw()).observe($('result-area'));
 for(const id of ['add-images','empty-add'])$(id).onclick=()=>$('file-input').click();
 $('file-input').onchange=async()=>{await addFiles(Array.from($('file-input').files));$('file-input').value='';};
 document.addEventListener('dragover',e=>{e.preventDefault();document.body.classList.add('dragging');});
